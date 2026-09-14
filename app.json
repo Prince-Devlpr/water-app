@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Smart Water Tank",
+    "slug": "smart-water-tank",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "smartwatertank",
+    "plugins": [
+      "expo-router"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
