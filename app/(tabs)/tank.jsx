@@ -17,15 +17,15 @@ import { api } from "../../services/api";
 
 export default function TankConfigScreen() {
   const [tankId, setTankId] = useState(null);
-  const [tankName, setTankName] = useState("Overhead Rooftop Tank");
-  const [deviceId, setDeviceId] = useState("ESP8266_001");
+  const [tankName, setTankName] = useState("Home Water Tank");
+  const [deviceId, setDeviceId] = useState("ESP32_001");
   const [shape, setShape] = useState("CYLINDER");
-  const [heightCm, setHeightCm] = useState("200");
+  const [heightCm, setHeightCm] = useState("11");
   const [radiusCm, setRadiusCm] = useState("60");
-  const [capacityLiters, setCapacityLiters] = useState("2260");
+  const [capacityLiters, setCapacityLiters] = useState("1000");
   const [sensorOffsetCm, setSensorOffsetCm] = useState("15");
-  const [lowThreshold, setLowThreshold] = useState("20");
-  const [highThreshold, setHighThreshold] = useState("90");
+  const [lowThreshold, setLowThreshold] = useState("50");
+  const [highThreshold, setHighThreshold] = useState("70");
   const [autoPump, setAutoPump] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -39,18 +39,18 @@ export default function TankConfigScreen() {
     try {
       const res = await api.get("/api/tanks");
       if (res?.data && res.data.length > 0) {
-        const t = res.data[0];
+        const t = res.data.find((x) => x.deviceId === "ESP32_001") || res.data[0];
         setTankId(t.id);
-        setTankName(t.name || "");
-        setDeviceId(t.deviceId || "");
+        setTankName(t.name || "Home Water Tank");
+        setDeviceId(t.deviceId || "ESP32_001");
         setShape(t.shape || "CYLINDER");
-        setHeightCm(String(t.heightCm || 200));
+        setHeightCm(String(t.tankDepthCm ?? t.heightCm ?? 11));
         setRadiusCm(String(t.radiusCm || 60));
-        setCapacityLiters(String(t.maxCapacityLiters || 2260));
+        setCapacityLiters(String(t.capacityLiters ?? t.maxCapacityLiters ?? 1000));
         setSensorOffsetCm(String(t.sensorOffsetCm || 15));
-        setLowThreshold(String(t.criticalLowPct || 20));
-        setHighThreshold(String(t.criticalHighPct || 90));
-        setAutoPump(t.autoPumpEnabled !== false);
+        setLowThreshold(String(t.lowThreshold ?? t.criticalLowPct ?? 50));
+        setHighThreshold(String(t.fullThreshold ?? t.criticalHighPct ?? 70));
+        setAutoPump(t.autoMode !== undefined ? Boolean(t.autoMode) : t.autoPumpEnabled !== false);
       }
     } catch (e) {
       console.log("Existing tank load note:", e.message);
@@ -65,13 +65,18 @@ export default function TankConfigScreen() {
       name: tankName,
       deviceId: deviceId,
       shape: shape,
+      tankDepthCm: Number(heightCm),
       heightCm: Number(heightCm),
-      radiusCm: Number(radiusCm),
+      capacityLiters: Number(capacityLiters),
       maxCapacityLiters: Number(capacityLiters),
-      sensorOffsetCm: Number(sensorOffsetCm),
+      lowThreshold: Number(lowThreshold),
       criticalLowPct: Number(lowThreshold),
+      fullThreshold: Number(highThreshold),
       criticalHighPct: Number(highThreshold),
+      autoMode: autoPump,
       autoPumpEnabled: autoPump,
+      sensorOffsetCm: Number(sensorOffsetCm),
+      radiusCm: Number(radiusCm),
     };
 
     try {

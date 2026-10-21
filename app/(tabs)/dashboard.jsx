@@ -18,12 +18,14 @@ import {
   AlertTriangle,
   Bell,
   CheckCircle2,
+  Cpu,
   Droplets,
   Gauge,
   MapPin,
   Power,
   RefreshCw,
   Ruler,
+  ShieldCheck,
   Wifi,
   XCircle,
 } from "lucide-react-native";
@@ -50,15 +52,17 @@ export default function DashboardScreen() {
   const [tank, setTank] = useState({
     id: 1,
     name: "Home Tank",
-    location: "Ultrasonic Sensor · ESP8266_001",
+    location: "Ultrasonic Sensor · ESP32_001",
     level: 0.0,
     currentLiters: 0,
     capacity: 1000,
     pump: false,
-    mode: "AUTOMATIC",
+    mode: "AUTO",
     flowRate: 0.0,
-    criticalLow: 20,
-    criticalHigh: 90,
+    totalLiters: 0.0,
+    tdsPpm: 220,
+    criticalLow: 50,
+    criticalHigh: 70,
   });
 
   const [alerts, setAlerts] = useState([
@@ -104,7 +108,7 @@ export default function DashboardScreen() {
       const tanksRes = await api.get("/api/tanks");
       if (tanksRes?.data && tanksRes.data.length > 0) {
         const activeTank =
-          tanksRes.data.find((t) => t.deviceId === "ESP8266_001") || tanksRes.data[0];
+          tanksRes.data.find((t) => t.deviceId === "ESP32_001" || t.deviceId === "ESP8266_001") || tanksRes.data[0];
 
         let currentStatus = null;
         try {
@@ -116,9 +120,13 @@ export default function DashboardScreen() {
 
         const reading = currentStatus?.current || activeTank.currentReading;
         const latestDistance = reading?.distanceCm ?? activeTank.currentDistanceCm ?? 0;
-        const latestLevel = reading?.waterLevelPercent ?? reading?.levelPercent ?? activeTank.currentLevelPct ?? prev.level;
-        const latestVolume = reading?.waterLevelLiters ?? reading?.volumeLiters ?? activeTank.currentVolumeLiters ?? prev.currentLiters;
+        const latestLevel = reading?.waterLevelPercent ?? reading?.levelPercent ?? activeTank.currentLevelPct ?? 0;
+        const latestVolume = reading?.waterLevelLiters ?? reading?.volumeLiters ?? activeTank.currentVolumeLiters ?? 0;
         const latestPump = reading?.pumpStatus === true || reading?.pumpStatus === "ON" || activeTank.pumpStatus === "ON";
+        const latestFlow = reading?.flowRate ?? activeTank.currentFlowRate ?? 0.0;
+        const latestTotal = reading?.totalLiters ?? activeTank.currentTotalLiters ?? 0.0;
+        const latestTds = reading?.tdsPpm ?? activeTank.currentTdsPpm ?? 220;
+        const latestMode = reading?.mode ?? activeTank.currentMode ?? (activeTank.autoMode ? "AUTO" : "MANUAL") ?? "AUTO";
 
         setDistanceCm(latestDistance);
 
@@ -126,13 +134,17 @@ export default function DashboardScreen() {
           ...prev,
           id: activeTank.id,
           name: activeTank.name || prev.name,
-          location: `Device: ${activeTank.deviceId || "ESP8266_001"}`,
+          location: `Device: ${activeTank.deviceId || "ESP32_001"}`,
           level: latestLevel,
           currentLiters: latestVolume,
           capacity: activeTank.capacityLiters ?? activeTank.maxCapacityLiters ?? prev.capacity,
           pump: latestPump,
-          criticalLow: activeTank.lowThreshold ?? activeTank.criticalLowPct ?? 20,
-          criticalHigh: activeTank.fullThreshold ?? activeTank.criticalHighPct ?? 90,
+          flowRate: latestFlow,
+          totalLiters: latestTotal,
+          tdsPpm: latestTds,
+          mode: latestMode,
+          criticalLow: activeTank.lowThreshold ?? activeTank.criticalLowPct ?? 50,
+          criticalHigh: activeTank.fullThreshold ?? activeTank.criticalHighPct ?? 70,
         }));
 
         setLastUpdated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
@@ -187,6 +199,10 @@ export default function DashboardScreen() {
               ? telemetry.waterLevelLiters
               : telemetry.volumeLiters ?? prev.currentLiters,
           pump: telemetry.pumpStatus !== undefined ? telemetry.pumpStatus : prev.pump,
+          flowRate: telemetry.flowRate !== undefined ? telemetry.flowRate : prev.flowRate,
+          totalLiters: telemetry.totalLiters !== undefined ? telemetry.totalLiters : prev.totalLiters,
+          tdsPpm: telemetry.tdsPpm !== undefined ? telemetry.tdsPpm : (telemetry.tds ?? prev.tdsPpm),
+          mode: telemetry.mode !== undefined ? telemetry.mode : prev.mode,
         }));
       },
       onAlert: (newAlert) => {
@@ -215,6 +231,10 @@ export default function DashboardScreen() {
       onDeviceStatus: (status) => {
         setDeviceOnline(status.online !== false);
       },
+      onModeChange: ({ mode }) => {
+        setTank((prev) => ({ ...prev, mode }));
+        showToast("Mode Changed", `Control mode switched to ${mode}`, "INFO");
+      },
     });
 
     const interval = setInterval(loadData, 5000);
@@ -224,6 +244,18 @@ export default function DashboardScreen() {
       unsubscribeFromTank(tank.id);
     };
   }, [tank.id]);
+
+  const handleModeToggle = async () => {
+    const nextMode = tank.mode === "AUTO" ? "MANUAL" : "AUTO";
+    try {
+      await api.post(`/api/tanks/${tank.id}/mode`, { mode: nextMode });
+      setTank((prev) => ({ ...prev, mode: nextMode }));
+      showToast("Mode Updated", `Switched to ${nextMode} mode.`, "SUCCESS");
+    } catch (err) {
+      setTank((prev) => ({ ...prev, mode: nextMode }));
+      showToast("Mode Switched", `Switched to ${nextMode} mode (local).`, "INFO");
+    }
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -369,7 +401,7 @@ export default function DashboardScreen() {
                 { color: deviceOnline ? COLORS.success : COLORS.danger },
               ]}
             >
-              {deviceOnline ? "ESP8266 Online (Receiving Data)" : "Device Standby"}
+              {deviceOnline ? "ESP32 Online (Receiving Data)" : "Device Standby"}
             </Text>
           </View>
           <Text style={styles.updatedText}>Synced: {lastUpdated}</Text>
@@ -386,35 +418,50 @@ export default function DashboardScreen() {
             criticalHigh={tank.criticalHigh}
           />
 
-          {/* Quick Pump Toggle Button */}
-          <Pressable
-            style={[
-              styles.pumpButton,
-              tank.pump ? styles.pumpButtonActive : styles.pumpButtonInactive,
-            ]}
-            onPress={handlePumpToggle}
-            disabled={pumpLoading}
-          >
-            {pumpLoading ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <>
-                <Power size={20} color={COLORS.white} style={{ marginRight: 8 }} />
-                <Text style={styles.pumpButtonText}>
-                  {tank.pump ? "STOP PUMP (RUNNING)" : "START WATER PUMP"}
-                </Text>
-              </>
-            )}
-          </Pressable>
+          {/* Dual Action Controls: Pump + Auto/Manual Mode */}
+          <View style={styles.controlsRow}>
+            <Pressable
+              style={[
+                styles.pumpButton,
+                tank.pump ? styles.pumpButtonActive : styles.pumpButtonInactive,
+              ]}
+              onPress={handlePumpToggle}
+              disabled={pumpLoading}
+            >
+              {pumpLoading ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <>
+                  <Power size={18} color={COLORS.white} style={{ marginRight: 6 }} />
+                  <Text style={styles.pumpButtonText}>
+                    {tank.pump ? "STOP PUMP (ON)" : "START PUMP"}
+                  </Text>
+                </>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={[
+                styles.modeButton,
+                tank.mode === "AUTO" ? styles.modeButtonAuto : styles.modeButtonManual,
+              ]}
+              onPress={handleModeToggle}
+            >
+              <Cpu size={18} color={tank.mode === "AUTO" ? COLORS.primaryDark : COLORS.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.modeButtonText, { color: tank.mode === "AUTO" ? COLORS.primaryDark : COLORS.accent }]}>
+                {tank.mode === "AUTO" ? "MODE: AUTO" : "MODE: MANUAL"}
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
-        {/* Quick Stats Grid */}
+        {/* Real-Time Sensor Telemetry Grid (6 Metrics) */}
         <View style={styles.grid}>
           <StatCard
             icon={<Ruler size={22} color={COLORS.primary} />}
             label="SENSOR DISTANCE"
             value={`${Number(distanceCm).toFixed(1)} cm`}
-            subtext="HC-SR04 ultrasonic"
+            subtext="Tank depth: 11.0 cm"
             color={COLORS.primary}
           />
           <StatCard
@@ -425,17 +472,33 @@ export default function DashboardScreen() {
             color={tank.pump ? COLORS.success : COLORS.secondary}
           />
           <StatCard
-            icon={<Droplets size={22} color={COLORS.cyan} />}
-            label="WATER VOLUME"
-            value={`${Math.round(tank.currentLiters)} L`}
-            subtext={`Capacity: ${tank.capacity} L`}
+            icon={<Gauge size={22} color={COLORS.cyan} />}
+            label="WATER FLOW RATE"
+            value={`${Number(tank.flowRate || 0).toFixed(1)} L/m`}
+            subtext={tank.flowRate > 0 ? "Flow active (YF-S201)" : "Idle / No flow"}
             color={COLORS.cyan}
+          />
+          <StatCard
+            icon={<Droplets size={22} color={COLORS.primary} />}
+            label="TOTAL PUMPED"
+            value={`${Number(tank.totalLiters || 0).toFixed(1)} L`}
+            subtext="Cumulative volume"
+            color={COLORS.primary}
+          />
+          <StatCard
+            icon={<ShieldCheck size={22} color={tank.tdsPpm > 500 ? COLORS.danger : COLORS.success} />}
+            label="WATER QUALITY (TDS)"
+            value={`${tank.tdsPpm || 220} ppm`}
+            valueColor={tank.tdsPpm > 500 ? COLORS.danger : COLORS.success}
+            subtext={tank.tdsPpm > 500 ? "⚠️ High TDS Alarm" : "Ideal (200–230 ppm)"}
+            color={tank.tdsPpm > 500 ? COLORS.danger : COLORS.success}
           />
           <StatCard
             icon={<Activity size={22} color={COLORS.accent} />}
             label="CONTROL MODE"
             value={tank.mode}
             valueColor={COLORS.accent}
+            subtext={tank.mode === "AUTO" ? "Auto pump rule" : "Manual override"}
             color={COLORS.accent}
           />
         </View>
@@ -480,7 +543,7 @@ export default function DashboardScreen() {
             <Text style={styles.conservationText}>
               Receiving live telemetry from HiveMQ topic:{" "}
               <Text style={{ fontWeight: "bold" }}>
-                smartwater/ESP8266_001/telemetry
+                {`smartwater/${tank.location?.includes("ESP32") ? "ESP32_001" : "ESP32_001"}/telemetry`}
               </Text>
             </Text>
           </View>
@@ -650,14 +713,19 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: 8,
   },
+  controlsRow: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginTop: 16,
+  },
   pumpButton: {
+    flex: 1.2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    width: "100%",
     height: 48,
     borderRadius: 14,
-    marginTop: 16,
     ...SHADOW,
   },
   pumpButtonActive: {
@@ -668,7 +736,29 @@ const styles = StyleSheet.create({
   },
   pumpButtonText: {
     color: COLORS.white,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  modeButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    ...SHADOW,
+  },
+  modeButtonAuto: {
+    backgroundColor: COLORS.paleBlue,
+    borderColor: COLORS.lightBlue,
+  },
+  modeButtonManual: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FCD34D",
+  },
+  modeButtonText: {
+    fontSize: 12,
     fontWeight: "800",
   },
   grid: {

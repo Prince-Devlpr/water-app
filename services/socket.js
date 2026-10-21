@@ -83,6 +83,11 @@ export function subscribeToTank(tankId, callbacks = {}) {
     socket.off("tank:device_status");
     socket.on("tank:device_status", callbacks.onDeviceStatus);
   }
+
+  if (callbacks.onModeChange) {
+    socket.off("tank:mode_change");
+    socket.on("tank:mode_change", callbacks.onModeChange);
+  }
 }
 
 export function unsubscribeFromTank(tankId) {

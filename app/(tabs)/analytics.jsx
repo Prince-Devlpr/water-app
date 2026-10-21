@@ -12,26 +12,29 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { BarChart3, Calendar, Droplet, History, TrendingDown, TrendingUp } from "lucide-react-native";
 import { COLORS, SHADOW } from "../../constants/theme";
 import { api } from "../../services/api";
+import { subscribeToTank, unsubscribeFromTank } from "../../services/socket";
 
 export default function AnalyticsScreen() {
   const [period, setPeriod] = useState("WEEKLY"); // DAILY, WEEKLY, MONTHLY
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [totalUsage, setTotalUsage] = useState("9,900 L");
-  const [avgUsage, setAvgUsage] = useState("1,414 L / day");
-  const [pumpRunTime, setPumpRunTime] = useState("3h 45m");
-  const [pumpCycles, setPumpCycles] = useState("12 times");
+  const [tankLabel, setTankLabel] = useState("ESP32_001");
+  const [totalUsage, setTotalUsage] = useState("0 L");
+  const [avgUsage, setAvgUsage] = useState("0 L / day");
+  const [pumpRunTime, setPumpRunTime] = useState("0m");
+  const [pumpCycles, setPumpCycles] = useState("0 times");
+  const [refillRate, setRefillRate] = useState("1.8 L/min");
   const [pumpHistory, setPumpHistory] = useState([]);
 
   const [chartData, setChartData] = useState([
-    { label: "Mon", liters: 1200, height: 60 },
-    { label: "Tue", liters: 1450, height: 75 },
-    { label: "Wed", liters: 1100, height: 55 },
-    { label: "Thu", liters: 1600, height: 85 },
-    { label: "Fri", liters: 1300, height: 65 },
-    { label: "Sat", liters: 1850, height: 95 },
-    { label: "Sun", liters: 1400, height: 70 },
+    { label: "Mon", liters: 120, height: 60 },
+    { label: "Tue", liters: 145, height: 75 },
+    { label: "Wed", liters: 110, height: 55 },
+    { label: "Thu", liters: 160, height: 85 },
+    { label: "Fri", liters: 130, height: 65 },
+    { label: "Sat", liters: 185, height: 95 },
+    { label: "Sun", liters: 140, height: 70 },
   ]);
 
   const loadAnalytics = async () => {
@@ -39,40 +42,66 @@ export default function AnalyticsScreen() {
     try {
       const tanksRes = await api.get("/api/tanks");
       if (tanksRes?.data && tanksRes.data.length > 0) {
-        const tankId = tanksRes.data[0].id;
-        
-        // Fetch period analytics
-        const endpoint = period.toLowerCase(); // daily, weekly, monthly
+        const targetTank = tanksRes.data.find((t) => t.deviceId === "ESP32_001") || tanksRes.data[0];
+        const tankId = targetTank.id;
+        setTankLabel(`${targetTank.name || "Tank"} (${targetTank.deviceId || "ESP32"})`);
+
+        // Fetch period analytics from backend: /api/tanks/:id/analytics/daily | weekly | monthly
+        const endpoint = period.toLowerCase();
         const res = await api.get(`/api/tanks/${tankId}/analytics/${endpoint}`);
         if (res?.data) {
-          if (res.data.totalConsumptionLiters) {
+          if (res.data.totalConsumptionLiters !== undefined) {
             setTotalUsage(`${Math.round(res.data.totalConsumptionLiters)} L`);
           }
-          if (res.data.breakdown) {
-            const maxVal = Math.max(...res.data.breakdown.map((b) => b.liters || 100), 100);
+
+          if (period === "DAILY") {
+            setAvgUsage(`${Math.round((res.data.totalConsumptionLiters || 0) / 24)} L / hr`);
+          } else if (res.data.avgDailyLiters !== undefined) {
+            setAvgUsage(`${Math.round(res.data.avgDailyLiters)} L / day`);
+          } else {
+            const days = period === "WEEKLY" ? 7 : 30;
+            setAvgUsage(`${Math.round((res.data.totalConsumptionLiters || 0) / days)} L / day`);
+          }
+
+          if (res.data.pumpRunTimeFormatted) {
+            setPumpRunTime(res.data.pumpRunTimeFormatted);
+          }
+
+          if (res.data.pumpActivations !== undefined) {
+            setPumpCycles(`${res.data.pumpActivations} times`);
+          }
+
+          if (res.data.avgRefillRate) {
+            setRefillRate(res.data.avgRefillRate);
+          }
+
+          if (res.data.breakdown && res.data.breakdown.length > 0) {
+            const maxVal = Math.max(...res.data.breakdown.map((b) => b.liters || 10), 10);
             setChartData(
               res.data.breakdown.map((b) => ({
-                label: b.label || b.day || b.hour,
+                label: b.label || b.day || b.hour || "P",
                 liters: Math.round(b.liters),
-                height: Math.max(15, Math.min(100, (b.liters / maxVal) * 100)),
+                height: Math.max(15, Math.min(100, Math.round(((b.liters || 1) / maxVal) * 100))),
               }))
             );
           }
         }
 
-        // Fetch pump history
+        // Fetch real pump event history from backend
         try {
           const histRes = await api.get(`/api/tanks/${tankId}/pump/history`);
           if (histRes?.data && Array.isArray(histRes.data)) {
-            setPumpHistory(histRes.data.slice(0, 5));
-            setPumpCycles(`${histRes.data.length} times`);
+            setPumpHistory(histRes.data.slice(0, 6));
+            if (!res?.data?.pumpActivations) {
+              setPumpCycles(`${histRes.data.length} times`);
+            }
           }
         } catch (e) {
-          console.log("Pump history note:", e.message);
+          console.log("Pump history fetch note:", e.message);
         }
       }
     } catch (err) {
-      console.log("Analytics note:", err.message);
+      console.log("Analytics fetch note:", err.message);
     } finally {
       setLoading(false);
     }
@@ -81,6 +110,31 @@ export default function AnalyticsScreen() {
   useEffect(() => {
     loadAnalytics();
   }, [period]);
+
+  // Real-time Socket.IO live sync for pump events and new telemetry data
+  useEffect(() => {
+    let activeTankId = null;
+    const initLiveSync = async () => {
+      try {
+        const tanksRes = await api.get("/api/tanks");
+        if (tanksRes?.data && tanksRes.data.length > 0) {
+          const target = tanksRes.data.find((t) => t.deviceId === "ESP32_001") || tanksRes.data[0];
+          activeTankId = target.id;
+          subscribeToTank(activeTankId, {
+            onPumpEvent: () => {
+              loadAnalytics();
+            },
+          });
+        }
+      } catch (e) {
+        // quiet fallback
+      }
+    };
+    initLiveSync();
+    return () => {
+      if (activeTankId) unsubscribeFromTank(activeTankId);
+    };
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -97,7 +151,7 @@ export default function AnalyticsScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Water Analytics</Text>
-          <Text style={styles.subtitle}>Real-time telemetry and pump usage data</Text>
+          <Text style={styles.subtitle}>{tankLabel} · Telemetry & Usage Analytics</Text>
         </View>
 
         {/* Period Selector Tabs */}
@@ -124,7 +178,7 @@ export default function AnalyticsScreen() {
             </View>
             <View style={styles.badgeSuccess}>
               <TrendingDown size={14} color={COLORS.success} />
-              <Text style={styles.badgeText}>-6.4%</Text>
+              <Text style={styles.badgeText}>Active</Text>
             </View>
           </View>
           <Text style={styles.summarySubtext}>
@@ -172,7 +226,7 @@ export default function AnalyticsScreen() {
             </View>
             <View style={styles.metricBox}>
               <Text style={styles.metricLabel}>Avg Refill Rate</Text>
-              <Text style={styles.metricValue}>22 L/min</Text>
+              <Text style={styles.metricValue}>{refillRate}</Text>
             </View>
           </View>
         </View>
