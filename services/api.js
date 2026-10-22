@@ -39,20 +39,22 @@ export function getAuthToken() {
 export async function ensureAuthenticated() {
   if (authToken) return authToken;
   
-  // Auto-login / register with default credentials so the app always receives live data
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'prince@gmail.com', password: 'Password123!' }),
-    });
-    const data = await res.json();
-    if (data?.data?.token) {
-      setAuthToken(data.data.token);
-      return data.data.token;
+  // Auto-login with default demo credentials
+  for (const pwd of ['password123', 'Password123!']) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'prince@gmail.com', password: pwd }),
+      });
+      const data = await res.json();
+      if (data?.data?.token) {
+        setAuthToken(data.data.token);
+        return data.data.token;
+      }
+    } catch (e) {
+      // try next candidate
     }
-  } catch (e) {
-    console.warn('Auto-auth notice:', e.message);
   }
   return null;
 }
