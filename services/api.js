@@ -97,3 +97,28 @@ export const api = {
   put: (path, body) => apiRequest(path, { method: "PUT", body: JSON.stringify(body) }),
   delete: (path) => apiRequest(path, { method: "DELETE" }),
 };
+
+/**
+ * Send pump or mode command to the backend, which publishes to HiveMQ
+ * topic: smartwater/{deviceId}/command
+ * Supported commands: "ON", "OFF", "AUTO", "MANUAL"
+ */
+export async function sendPumpCommand(command, deviceId = "ESP32_001") {
+  const normalized = String(command || "").toUpperCase();
+  try {
+    const result = await api.post("/api/device/command", {
+      command: normalized,
+      deviceId,
+    });
+    console.log("Pump command dispatched:", result);
+    return result;
+  } catch (error) {
+    console.error("Pump command error:", error.message);
+    throw error;
+  }
+}
+
+// Connect these functions to UI buttons:
+export const pumpOn = (deviceId = "ESP32_001") => sendPumpCommand("ON", deviceId);
+export const pumpOff = (deviceId = "ESP32_001") => sendPumpCommand("OFF", deviceId);
+export const autoMode = (deviceId = "ESP32_001") => sendPumpCommand("AUTO", deviceId);

@@ -88,6 +88,18 @@ export function subscribeToTank(tankId, callbacks = {}) {
     socket.off("tank:mode_change");
     socket.on("tank:mode_change", callbacks.onModeChange);
   }
+
+  if (callbacks.onAck) {
+    socket.off("tank:ack");
+    socket.off("device:ack");
+    socket.on("tank:ack", (ack) => {
+      console.log("Hardware ACK received in App:", ack);
+      callbacks.onAck(ack);
+    });
+    socket.on("device:ack", (ack) => {
+      callbacks.onAck(ack);
+    });
+  }
 }
 
 export function unsubscribeFromTank(tankId) {

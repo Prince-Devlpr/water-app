@@ -34,12 +34,14 @@ import StatCard from "../../components/StatCard";
 import AlertCard from "../../components/AlertCard";
 import NotificationModal from "../../components/NotificationModal";
 import { COLORS, SHADOW } from "../../constants/theme";
-import { api, ensureAuthenticated } from "../../services/api";
+import { api, ensureAuthenticated, sendPumpCommand, pumpOn, pumpOff, autoMode } from "../../services/api";
 import { subscribeToTank, unsubscribeFromTank } from "../../services/socket";
 
 export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [pumpLoading, setPumpLoading] = useState(false);
+  const [commandInProgress, setCommandInProgress] = useState(null); // 'ON' | 'OFF' | 'AUTO' | null
+  const [hardwareConfirmed, setHardwareConfirmed] = useState(true);
   const [deviceOnline, setDeviceOnline] = useState(true);
   const [lastUpdated, setLastUpdated] = useState("Just now");
   const [distanceCm, setDistanceCm] = useState(0);
@@ -218,6 +220,7 @@ export default function DashboardScreen() {
         showToast(alertObj.title, alertObj.message, alertObj.severity);
       },
       onPumpEvent: (event) => {
+        setHardwareConfirmed(true);
         setTank((prev) => ({
           ...prev,
           pump: event.status === "ON",
@@ -235,6 +238,21 @@ export default function DashboardScreen() {
         setTank((prev) => ({ ...prev, mode }));
         showToast("Mode Changed", `Control mode switched to ${mode}`, "INFO");
       },
+      onAck: (ack) => {
+        setHardwareConfirmed(true);
+        if (typeof ack.pumpOn === "boolean") {
+          setTank((prev) => ({
+            ...prev,
+            pump: ack.pumpOn,
+            mode: ack.autoMode ? "AUTO" : "MANUAL",
+          }));
+          showToast(
+            "Hardware Confirmed (ACK)",
+            `ESP32 Relay is ${ack.pumpOn ? "ON" : "OFF"} (${ack.autoMode ? "Auto Mode" : "Manual Mode"})`,
+            ack.pumpOn ? "SUCCESS" : "INFO"
+          );
+        }
+      },
     });
 
     const interval = setInterval(loadData, 5000);
@@ -244,18 +262,6 @@ export default function DashboardScreen() {
       unsubscribeFromTank(tank.id);
     };
   }, [tank.id]);
-
-  const handleModeToggle = async () => {
-    const nextMode = tank.mode === "AUTO" ? "MANUAL" : "AUTO";
-    try {
-      await api.post(`/api/tanks/${tank.id}/mode`, { mode: nextMode });
-      setTank((prev) => ({ ...prev, mode: nextMode }));
-      showToast("Mode Updated", `Switched to ${nextMode} mode.`, "SUCCESS");
-    } catch (err) {
-      setTank((prev) => ({ ...prev, mode: nextMode }));
-      showToast("Mode Switched", `Switched to ${nextMode} mode (local).`, "INFO");
-    }
-  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -283,28 +289,53 @@ export default function DashboardScreen() {
     setAlerts((prev) => prev.map((a) => ({ ...a, isRead: true })));
   };
 
-  const handlePumpToggle = async () => {
-    setPumpLoading(true);
-    const targetState = !tank.pump;
+  /**
+   * Two-way command flow:
+   * App -> Backend (/api/device/command) -> HiveMQ -> ESP32 -> ACK / Telemetry confirmation
+   */
+  const handlePumpCommand = async (command) => {
+    setCommandInProgress(command);
+    setHardwareConfirmed(false);
+
     try {
-      if (targetState) {
-        await api.post(`/api/tanks/${tank.id}/pump/on`, { durationSeconds: 300 });
-      } else {
-        await api.post(`/api/tanks/${tank.id}/pump/off`, {});
+      await sendPumpCommand(command, "ESP32_001");
+
+      if (command === "ON") {
+        setTank((prev) => ({ ...prev, pump: true, mode: "MANUAL" }));
+        showToast(
+          "Command Dispatched",
+          "Pump ON sent via HiveMQ. Awaiting ESP32 GPIO 26 confirmation...",
+          "INFO"
+        );
+      } else if (command === "OFF") {
+        setTank((prev) => ({ ...prev, pump: false, mode: "MANUAL" }));
+        showToast(
+          "Command Dispatched",
+          "Pump OFF sent via HiveMQ. Awaiting ESP32 GPIO 26 confirmation...",
+          "INFO"
+        );
+      } else if (command === "AUTO") {
+        setTank((prev) => ({ ...prev, mode: "AUTO" }));
+        showToast(
+          "Auto Mode Activated",
+          "Threshold pump control restored on ESP32.",
+          "SUCCESS"
+        );
       }
-      setTank((prev) => ({ ...prev, pump: targetState }));
-      showToast(
-        "Relay Command Published",
-        `MQTT command sent to turn pump ${targetState ? "ON" : "OFF"}.`,
-        targetState ? "SUCCESS" : "INFO"
-      );
     } catch (err) {
-      setTank((prev) => ({ ...prev, pump: targetState }));
-      showToast("Pump Status Updated", `Pump switched to ${targetState ? "ON" : "OFF"}`, "INFO");
+      showToast(
+        "Command Failed",
+        err.message || "Failed to publish MQTT command",
+        "CRITICAL"
+      );
     } finally {
-      setPumpLoading(false);
+      setCommandInProgress(null);
     }
   };
+
+  const pumpOnAction = () => handlePumpCommand("ON");
+  const pumpOffAction = () => handlePumpCommand("OFF");
+  const autoModeAction = () => handlePumpCommand("AUTO");
 
   const unreadAlertsCount = alerts.filter((a) => !a.isRead).length;
 
@@ -418,39 +449,108 @@ export default function DashboardScreen() {
             criticalHigh={tank.criticalHigh}
           />
 
-          {/* Dual Action Controls: Pump + Auto/Manual Mode */}
+          {/* Two-Way Pump Command Flow & Live Relay Confirmation */}
+          <View style={styles.hardwareStatusRow}>
+            {!hardwareConfirmed ? (
+              <>
+                <ActivityIndicator size="small" color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.hardwarePendingText}>
+                  Awaiting ESP32 hardware acknowledgement (ACK)...
+                </Text>
+              </>
+            ) : (
+              <>
+                <CheckCircle2
+                  size={14}
+                  color={tank.pump ? COLORS.success : COLORS.muted}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.hardwareConfirmedText,
+                    { color: tank.pump ? COLORS.success : COLORS.textMuted },
+                  ]}
+                >
+                  Hardware State: Relay GPIO 26 is {tank.pump ? "ON" : "OFF"} • Mode: {tank.mode}
+                </Text>
+              </>
+            )}
+          </View>
+
+          {/* Three Command Buttons: Pump ON / Pump OFF / Auto Mode */}
           <View style={styles.controlsRow}>
+            {/* 1. Pump ON */}
             <Pressable
               style={[
-                styles.pumpButton,
-                tank.pump ? styles.pumpButtonActive : styles.pumpButtonInactive,
+                styles.actionBtn,
+                styles.btnPumpOn,
+                tank.pump && tank.mode !== "AUTO" && styles.btnPumpOnActive,
               ]}
-              onPress={handlePumpToggle}
-              disabled={pumpLoading}
+              onPress={pumpOnAction}
+              disabled={commandInProgress !== null}
             >
-              {pumpLoading ? (
-                <ActivityIndicator color={COLORS.white} />
+              {commandInProgress === "ON" ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
               ) : (
                 <>
-                  <Power size={18} color={COLORS.white} style={{ marginRight: 6 }} />
-                  <Text style={styles.pumpButtonText}>
-                    {tank.pump ? "STOP PUMP (ON)" : "START PUMP"}
-                  </Text>
+                  <Power size={16} color={COLORS.white} style={{ marginRight: 4 }} />
+                  <Text style={styles.btnText}>PUMP ON</Text>
                 </>
               )}
             </Pressable>
 
+            {/* 2. Pump OFF */}
             <Pressable
               style={[
-                styles.modeButton,
-                tank.mode === "AUTO" ? styles.modeButtonAuto : styles.modeButtonManual,
+                styles.actionBtn,
+                styles.btnPumpOff,
+                !tank.pump && tank.mode !== "AUTO" && styles.btnPumpOffActive,
               ]}
-              onPress={handleModeToggle}
+              onPress={pumpOffAction}
+              disabled={commandInProgress !== null}
             >
-              <Cpu size={18} color={tank.mode === "AUTO" ? COLORS.primaryDark : COLORS.accent} style={{ marginRight: 6 }} />
-              <Text style={[styles.modeButtonText, { color: tank.mode === "AUTO" ? COLORS.primaryDark : COLORS.accent }]}>
-                {tank.mode === "AUTO" ? "MODE: AUTO" : "MODE: MANUAL"}
-              </Text>
+              {commandInProgress === "OFF" ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
+              ) : (
+                <>
+                  <Power size={16} color={COLORS.white} style={{ marginRight: 4 }} />
+                  <Text style={styles.btnText}>PUMP OFF</Text>
+                </>
+              )}
+            </Pressable>
+
+            {/* 3. Auto Mode */}
+            <Pressable
+              style={[
+                styles.actionBtn,
+                styles.btnAuto,
+                tank.mode === "AUTO" && styles.btnAutoActive,
+              ]}
+              onPress={autoModeAction}
+              disabled={commandInProgress !== null}
+            >
+              {commandInProgress === "AUTO" ? (
+                <ActivityIndicator
+                  color={tank.mode === "AUTO" ? COLORS.white : COLORS.primaryDark}
+                  size="small"
+                />
+              ) : (
+                <>
+                  <Cpu
+                    size={16}
+                    color={tank.mode === "AUTO" ? COLORS.white : COLORS.primaryDark}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.btnText,
+                      tank.mode !== "AUTO" && { color: COLORS.primaryDark },
+                    ]}
+                  >
+                    AUTO
+                  </Text>
+                </>
+              )}
             </Pressable>
           </View>
         </View>
@@ -719,47 +819,72 @@ const styles = StyleSheet.create({
     width: "100%",
     marginTop: 16,
   },
-  pumpButton: {
-    flex: 1.2,
+  hardwareStatusRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 48,
-    borderRadius: 14,
-    ...SHADOW,
+    marginTop: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
-  pumpButtonActive: {
-    backgroundColor: COLORS.danger,
+  hardwarePendingText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: COLORS.primary,
   },
-  pumpButtonInactive: {
-    backgroundColor: COLORS.primary,
+  hardwareConfirmedText: {
+    fontSize: 11,
+    fontWeight: "700",
   },
-  pumpButtonText: {
-    color: COLORS.white,
-    fontSize: 13,
-    fontWeight: "800",
+  controlsRow: {
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+    marginTop: 10,
   },
-  modeButton: {
+  actionBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 48,
-    borderRadius: 14,
-    borderWidth: 1.5,
+    height: 44,
+    borderRadius: 12,
     ...SHADOW,
   },
-  modeButtonAuto: {
-    backgroundColor: COLORS.paleBlue,
-    borderColor: COLORS.lightBlue,
-  },
-  modeButtonManual: {
-    backgroundColor: "#FFFBEB",
-    borderColor: "#FCD34D",
-  },
-  modeButtonText: {
-    fontSize: 12,
+  btnText: {
+    color: COLORS.white,
+    fontSize: 11,
     fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  btnPumpOn: {
+    backgroundColor: "#10B981",
+  },
+  btnPumpOnActive: {
+    backgroundColor: "#059669",
+    borderWidth: 2,
+    borderColor: "#A7F3D0",
+  },
+  btnPumpOff: {
+    backgroundColor: "#EF4444",
+  },
+  btnPumpOffActive: {
+    backgroundColor: "#DC2626",
+    borderWidth: 2,
+    borderColor: "#FECACA",
+  },
+  btnAuto: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1.5,
+    borderColor: "#BFDBFE",
+  },
+  btnAutoActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primaryDark,
   },
   grid: {
     flexDirection: "row",

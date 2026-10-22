@@ -11,9 +11,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Sliders, Save, Cpu, Layers } from "lucide-react-native";
+import { Sliders, Save, Cpu, Layers, Power } from "lucide-react-native";
 import { COLORS, SHADOW } from "../../constants/theme";
-import { api } from "../../services/api";
+import { api, sendPumpCommand } from "../../services/api";
 
 export default function TankConfigScreen() {
   const [tankId, setTankId] = useState(null);
@@ -29,6 +29,22 @@ export default function TankConfigScreen() {
   const [autoPump, setAutoPump] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [testingCmd, setTestingCmd] = useState(null);
+
+  const handleTestCommand = async (cmd) => {
+    setTestingCmd(cmd);
+    try {
+      await sendPumpCommand(cmd, deviceId || "ESP32_001");
+      Alert.alert(
+        "Command Dispatched",
+        `Sent ${cmd} command to HiveMQ topic: smartwater/${deviceId || "ESP32_001"}/command\n\nESP32 will switch relay GPIO 26 and reply on ACK topic.`
+      );
+    } catch (e) {
+      Alert.alert("Command Error", e.message || "Failed to dispatch command");
+    } finally {
+      setTestingCmd(null);
+    }
+  };
 
   useEffect(() => {
     loadExistingTank();
@@ -233,6 +249,58 @@ export default function TankConfigScreen() {
           </View>
         </View>
 
+        {/* Hardware Relay Test & HiveMQ Flow */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <Power size={18} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Manual Pump Relay Test</Text>
+          </View>
+          <Text style={styles.testSubtitle}>
+            Dispatches command via Backend to HiveMQ topic:{"\n"}
+            <Text style={{ fontWeight: "700", color: COLORS.primaryDark }}>
+              smartwater/{deviceId || "ESP32_001"}/command
+            </Text>
+          </Text>
+
+          <View style={styles.testBtnRow}>
+            <Pressable
+              style={[styles.testBtn, styles.testBtnOn]}
+              onPress={() => handleTestCommand("ON")}
+              disabled={testingCmd !== null}
+            >
+              {testingCmd === "ON" ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
+              ) : (
+                <Text style={styles.testBtnText}>TEST ON</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={[styles.testBtn, styles.testBtnOff]}
+              onPress={() => handleTestCommand("OFF")}
+              disabled={testingCmd !== null}
+            >
+              {testingCmd === "OFF" ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
+              ) : (
+                <Text style={styles.testBtnText}>TEST OFF</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={[styles.testBtn, styles.testBtnAuto]}
+              onPress={() => handleTestCommand("AUTO")}
+              disabled={testingCmd !== null}
+            >
+              {testingCmd === "AUTO" ? (
+                <ActivityIndicator color={COLORS.primaryDark} size="small" />
+              ) : (
+                <Text style={[styles.testBtnText, { color: COLORS.primaryDark }]}>AUTO</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+
         {/* Save Button */}
         <Pressable style={styles.saveButton} onPress={handleSave} disabled={saving}>
           <Save size={18} color={COLORS.white} style={{ marginRight: 8 }} />
@@ -338,6 +406,40 @@ const styles = StyleSheet.create({
   saveText: {
     color: COLORS.white,
     fontSize: 15,
+    fontWeight: "800",
+  },
+  testSubtitle: {
+    fontSize: 12,
+    color: COLORS.muted,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  testBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  testBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW,
+  },
+  testBtnOn: {
+    backgroundColor: "#10B981",
+  },
+  testBtnOff: {
+    backgroundColor: "#EF4444",
+  },
+  testBtnAuto: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1.5,
+    borderColor: "#BFDBFE",
+  },
+  testBtnText: {
+    color: COLORS.white,
+    fontSize: 12,
     fontWeight: "800",
   },
 });
