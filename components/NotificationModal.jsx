@@ -26,10 +26,11 @@ export default function NotificationModal({
   onMarkAsRead,
   onMarkAllAsRead,
 }) {
-  const [filter, setFilter] = useState("ALL"); // ALL, CRITICAL, WARNING, INFO
+  const [filter, setFilter] = useState("ALL"); // ALL, UNREAD, CRITICAL, WARNING, INFO
 
   const filteredAlerts = alerts.filter((a) => {
     if (filter === "ALL") return true;
+    if (filter === "UNREAD") return !a.isRead;
     if (filter === "CRITICAL") return a.severity === "CRITICAL" || a.severity === "DANGER";
     if (filter === "WARNING") return a.severity === "WARNING";
     if (filter === "INFO") return a.severity === "INFO" || a.severity === "NORMAL" || a.severity === "SUCCESS";
@@ -79,7 +80,7 @@ export default function NotificationModal({
           {/* Filter Chips & Mark All Read */}
           <View style={styles.actionsRow}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsContainer}>
-              {["ALL", "CRITICAL", "WARNING", "INFO"].map((f) => (
+              {["ALL", "UNREAD", "CRITICAL", "WARNING"].map((f) => (
                 <Pressable
                   key={f}
                   style={[styles.chip, filter === f && styles.chipActive]}

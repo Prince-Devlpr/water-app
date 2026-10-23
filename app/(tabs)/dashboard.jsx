@@ -273,20 +273,21 @@ export default function DashboardScreen() {
     try {
       await api.put(`/api/alerts/${alertId}/read`, {});
     } catch (e) {
-      // local fallback
+      console.log("Mark alert read notice:", e.message);
     }
     setAlerts((prev) =>
-      prev.map((a) => (a.id === alertId ? { ...a, isRead: true } : a))
+      prev.map((a) => (String(a.id) === String(alertId) ? { ...a, isRead: true } : a))
     );
   };
 
   const handleMarkAllAsRead = async () => {
     try {
-      await api.put(`/api/alerts/read-all`, {});
+      await api.put(`/api/alerts/read-all`, { tankId: tank.id });
     } catch (e) {
-      // local fallback
+      console.log("Mark all alerts read notice:", e.message);
     }
     setAlerts((prev) => prev.map((a) => ({ ...a, isRead: true })));
+    showToast("Notifications Read", "All alerts marked as read.", "SUCCESS");
   };
 
   /**
@@ -382,7 +383,7 @@ export default function DashboardScreen() {
         {/* Header with Notification Badge & Tactile Refresh */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Live ESP8266 Telemetry</Text>
+            <Text style={styles.greeting}>Smart Water Dashboard</Text>
             <Text style={styles.heading}>{tank.name}</Text>
             <View style={styles.location}>
               <MapPin size={14} color={COLORS.muted} />
@@ -391,22 +392,24 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.headerActions}>
-            {/* Notification Bell Button with Badge */}
+            {/* Notification Bell Button with Interactive Badge */}
             <Pressable
-              style={styles.actionBtn}
+              style={styles.headerIconBtn}
               onPress={() => setNotificationModalVisible(true)}
             >
               <Bell size={20} color={COLORS.primary} />
               {unreadAlertsCount > 0 && (
                 <View style={styles.bellBadge}>
-                  <Text style={styles.bellBadgeText}>{unreadAlertsCount}</Text>
+                  <Text style={styles.bellBadgeText}>
+                    {unreadAlertsCount > 99 ? "99+" : unreadAlertsCount}
+                  </Text>
                 </View>
               )}
             </Pressable>
 
             {/* Tactile Refresh Button with Spin Animation */}
             <Pressable
-              style={styles.actionBtn}
+              style={styles.headerIconBtn}
               onPress={() => loadData(true)}
               disabled={refreshing}
             >
@@ -482,7 +485,7 @@ export default function DashboardScreen() {
             {/* 1. Pump ON */}
             <Pressable
               style={[
-                styles.actionBtn,
+                styles.pumpActionBtn,
                 styles.btnPumpOn,
                 tank.pump && tank.mode !== "AUTO" && styles.btnPumpOnActive,
               ]}
@@ -502,7 +505,7 @@ export default function DashboardScreen() {
             {/* 2. Pump OFF */}
             <Pressable
               style={[
-                styles.actionBtn,
+                styles.pumpActionBtn,
                 styles.btnPumpOff,
                 !tank.pump && tank.mode !== "AUTO" && styles.btnPumpOffActive,
               ]}
@@ -522,7 +525,7 @@ export default function DashboardScreen() {
             {/* 3. Auto Mode */}
             <Pressable
               style={[
-                styles.actionBtn,
+                styles.pumpActionBtn,
                 styles.btnAuto,
                 tank.mode === "AUTO" && styles.btnAutoActive,
               ]}
@@ -743,7 +746,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 4,
   },
-  actionBtn: {
+  headerIconBtn: {
     width: 44,
     height: 44,
     borderRadius: 14,
@@ -751,23 +754,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: "#E2E8F0",
     position: "relative",
     ...SHADOW,
   },
   bellBadge: {
     position: "absolute",
-    top: -4,
-    right: -4,
-    backgroundColor: COLORS.danger,
-    borderRadius: 9,
-    minWidth: 18,
-    height: 18,
+    top: -5,
+    right: -5,
+    backgroundColor: "#EF4444",
+    borderRadius: 11,
+    minWidth: 20,
+    height: 20,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
     borderWidth: 2,
     borderColor: COLORS.white,
+    zIndex: 99,
+    elevation: 5,
   },
   bellBadgeText: {
     color: COLORS.white,
@@ -813,12 +818,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: 8,
   },
-  controlsRow: {
-    flexDirection: "row",
-    gap: 10,
-    width: "100%",
-    marginTop: 16,
-  },
   hardwareStatusRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -844,9 +843,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     width: "100%",
-    marginTop: 10,
+    marginTop: 12,
   },
-  actionBtn: {
+  pumpActionBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",

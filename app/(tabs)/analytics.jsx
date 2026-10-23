@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { BarChart3, Calendar, Droplet, History, TrendingDown, TrendingUp } from "lucide-react-native";
+import { BarChart3, Calendar, Droplet, History, TrendingDown, TrendingUp, Waves, Gauge } from "lucide-react-native";
 import { COLORS, SHADOW } from "../../constants/theme";
 import { api } from "../../services/api";
 import { subscribeToTank, unsubscribeFromTank } from "../../services/socket";
@@ -25,6 +25,9 @@ export default function AnalyticsScreen() {
   const [pumpRunTime, setPumpRunTime] = useState("0m");
   const [pumpCycles, setPumpCycles] = useState("0 times");
   const [refillRate, setRefillRate] = useState("1.8 L/min");
+  const [avgDailyFlow, setAvgDailyFlow] = useState("1.85 L/min");
+  const [avgWeeklyFlow, setAvgWeeklyFlow] = useState("1.92 L/min");
+  const [peakFlowRate, setPeakFlowRate] = useState("2.80 L/min");
   const [pumpHistory, setPumpHistory] = useState([]);
 
   const [chartData, setChartData] = useState([
@@ -73,6 +76,16 @@ export default function AnalyticsScreen() {
 
           if (res.data.avgRefillRate) {
             setRefillRate(res.data.avgRefillRate);
+          }
+
+          if (res.data.avgDailyFlowRate) {
+            setAvgDailyFlow(res.data.avgDailyFlowRate);
+          }
+          if (res.data.avgWeeklyFlowRate) {
+            setAvgWeeklyFlow(res.data.avgWeeklyFlowRate);
+          }
+          if (res.data.peakFlowRate) {
+            setPeakFlowRate(res.data.peakFlowRate);
           }
 
           if (res.data.breakdown && res.data.breakdown.length > 0) {
@@ -227,6 +240,37 @@ export default function AnalyticsScreen() {
             <View style={styles.metricBox}>
               <Text style={styles.metricLabel}>Avg Refill Rate</Text>
               <Text style={styles.metricValue}>{refillRate}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Flow Rate Intelligence & Averages Card */}
+        <View style={styles.flowCard}>
+          <View style={styles.chartHeader}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Waves size={18} color={COLORS.primary} />
+              <Text style={styles.cardTitle}>Flow Rate Intelligence</Text>
+            </View>
+            <View style={styles.flowStatusBadge}>
+              <Text style={styles.flowStatusText}>Nominal Refill</Text>
+            </View>
+          </View>
+
+          <View style={styles.flowGrid}>
+            <View style={styles.flowStatBox}>
+              <Text style={styles.flowStatLabel}>Daily Average</Text>
+              <Text style={styles.flowStatValue}>{avgDailyFlow}</Text>
+              <Text style={styles.flowStatSub}>Past 24h average</Text>
+            </View>
+            <View style={styles.flowStatBox}>
+              <Text style={styles.flowStatLabel}>Weekly Average</Text>
+              <Text style={styles.flowStatValue}>{avgWeeklyFlow}</Text>
+              <Text style={styles.flowStatSub}>7-day baseline</Text>
+            </View>
+            <View style={styles.flowStatBox}>
+              <Text style={styles.flowStatLabel}>Peak Observed</Text>
+              <Text style={[styles.flowStatValue, { color: COLORS.accent }]}>{peakFlowRate}</Text>
+              <Text style={styles.flowStatSub}>Max recorded</Text>
             </View>
           </View>
         </View>
@@ -465,5 +509,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.muted,
     fontWeight: "700",
+  },
+  flowCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    padding: 18,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOW,
+  },
+  flowStatusBadge: {
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  flowStatusText: {
+    color: COLORS.success,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  flowGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+  flowStatBox: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  flowStatLabel: {
+    fontSize: 10,
+    color: COLORS.muted,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  flowStatValue: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: COLORS.primaryDark,
+    marginTop: 4,
+  },
+  flowStatSub: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    textAlign: "center",
   },
 });

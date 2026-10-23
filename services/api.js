@@ -36,27 +36,39 @@ export function getAuthToken() {
   return authToken;
 }
 
+let authPromise = null;
+
 export async function ensureAuthenticated() {
   if (authToken) return authToken;
-  
-  // Auto-login with default demo credentials
-  for (const pwd of ['password123', 'Password123!']) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'prince@gmail.com', password: pwd }),
-      });
-      const data = await res.json();
-      if (data?.data?.token) {
-        setAuthToken(data.data.token);
-        return data.data.token;
+  if (authPromise) return authPromise;
+
+  authPromise = (async () => {
+    // Auto-login with default demo credentials
+    for (const pwd of ['password123', 'Password123!']) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'prince@gmail.com', password: pwd }),
+        });
+        const data = await res.json();
+        if (data?.data?.token) {
+          authToken = data.data.token;
+          setAuthToken(data.data.token);
+          return data.data.token;
+        }
+      } catch (e) {
+        // try next candidate
       }
-    } catch (e) {
-      // try next candidate
     }
+    return null;
+  })();
+
+  try {
+    return await authPromise;
+  } finally {
+    authPromise = null;
   }
-  return null;
 }
 
 export async function apiRequest(path, options = {}) {
@@ -66,9 +78,11 @@ export async function apiRequest(path, options = {}) {
     await ensureAuthenticated();
   }
 
+  const token = authToken || (await ensureAuthenticated());
+
   const headers = {
     "Content-Type": "application/json",
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
 
@@ -85,8 +99,27 @@ export async function apiRequest(path, options = {}) {
     data = text;
   }
 
+  // Automatic retry on 401: token expired or cleared
+  if (response.status === 401 && !path.includes('/auth/')) {
+    authToken = null;
+    const freshToken = await ensureAuthenticated();
+    if (freshToken) {
+      const retryResponse = await fetch(url, {
+        ...options,
+        headers: {
+          ...headers,
+          Authorization: `Bearer ${freshToken}`,
+        },
+      });
+      const retryText = await retryResponse.text();
+      let retryData;
+      try { retryData = JSON.parse(retryText); } catch { retryData = retryText; }
+      if (retryResponse.ok) return retryData;
+    }
+  }
+
   if (!response.ok) {
-    const errorMsg = data?.message || `API error ${response.status}`;
+    const errorMsg = data?.message || data?.error || `API error ${response.status}`;
     throw new Error(errorMsg);
   }
 

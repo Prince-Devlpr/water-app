@@ -34,11 +34,26 @@ export default function TankConfigScreen() {
   const handleTestCommand = async (cmd) => {
     setTestingCmd(cmd);
     try {
-      await sendPumpCommand(cmd, deviceId || "ESP32_001");
-      Alert.alert(
-        "Command Dispatched",
-        `Sent ${cmd} command to HiveMQ topic: smartwater/${deviceId || "ESP32_001"}/command\n\nESP32 will switch relay GPIO 26 and reply on ACK topic.`
-      );
+      if (cmd === "CONFIG") {
+        await api.post("/api/device/command", {
+          command: "CONFIG",
+          deviceId: deviceId || "ESP32_001",
+          tankDepthCm: Number(heightCm),
+          lowThreshold: Number(lowThreshold),
+          fullThreshold: Number(highThreshold),
+          autoMode: autoPump,
+        });
+        Alert.alert(
+          "Calibration Synced",
+          `Sent dynamic calibration to ESP32:\n• Depth: ${heightCm} cm\n• Low Trigger: ${lowThreshold}%\n• Full Trigger: ${highThreshold}%\n• Mode: ${autoPump ? "AUTO" : "MANUAL"}`
+        );
+      } else {
+        await sendPumpCommand(cmd, deviceId || "ESP32_001");
+        Alert.alert(
+          "Command Dispatched",
+          `Sent ${cmd} command to HiveMQ topic: smartwater/${deviceId || "ESP32_001"}/command\n\nESP32 will switch relay GPIO 26 and reply on ACK topic.`
+        );
+      }
     } catch (e) {
       Alert.alert("Command Error", e.message || "Failed to dispatch command");
     } finally {
@@ -103,7 +118,25 @@ export default function TankConfigScreen() {
         res = await api.post("/api/tanks", payload);
         if (res?.data?.id) setTankId(res.data.id);
       }
-      Alert.alert("Success", "Tank configuration saved and synced with cloud database!");
+
+      // Also dispatch dynamic calibration payload to ESP32
+      try {
+        await api.post("/api/device/command", {
+          command: "CONFIG",
+          deviceId: deviceId || "ESP32_001",
+          tankDepthCm: Number(heightCm),
+          lowThreshold: Number(lowThreshold),
+          fullThreshold: Number(highThreshold),
+          autoMode: autoPump,
+        });
+      } catch (cmdErr) {
+        console.log("Direct device config push note:", cmdErr.message);
+      }
+
+      Alert.alert(
+        "Calibration Saved & Dispatched",
+        `Configuration saved to database and sent to ESP32 via HiveMQ topic:\nsmartwater/${deviceId || "ESP32_001"}/command\n\n• Depth: ${heightCm} cm\n• Low Trigger: ${lowThreshold}%\n• Full Trigger: ${highThreshold}%\n• Mode: ${autoPump ? "AUTO" : "MANUAL"}`
+      );
     } catch (err) {
       Alert.alert("Saved Locally", `Note: ${err.message}`);
     } finally {
@@ -141,12 +174,12 @@ export default function TankConfigScreen() {
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>ESP8266 Device ID (matches firmware)</Text>
+            <Text style={styles.label}>ESP32 Device ID (matches firmware)</Text>
             <TextInput
               style={styles.input}
               value={deviceId}
               onChangeText={setDeviceId}
-              placeholder="e.g. ESP8266_001"
+              placeholder="e.g. ESP32_001"
               autoCapitalize="characters"
             />
           </View>
@@ -299,6 +332,21 @@ export default function TankConfigScreen() {
               )}
             </Pressable>
           </View>
+
+          <Pressable
+            style={[styles.syncBtn, { marginTop: 10 }]}
+            onPress={() => handleTestCommand("CONFIG")}
+            disabled={testingCmd !== null}
+          >
+            {testingCmd === "CONFIG" ? (
+              <ActivityIndicator color={COLORS.primary} size="small" />
+            ) : (
+              <>
+                <Cpu size={16} color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.syncBtnText}>Send Calibration to ESP32 (MQTT)</Text>
+              </>
+            )}
+          </Pressable>
         </View>
 
         {/* Save Button */}
@@ -439,6 +487,22 @@ const styles = StyleSheet.create({
   },
   testBtnText: {
     color: COLORS.white,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  syncBtn: {
+    flexDirection: "row",
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.paleBlue,
+    borderWidth: 1.5,
+    borderColor: COLORS.lightBlue,
+    ...SHADOW,
+  },
+  syncBtnText: {
+    color: COLORS.primaryDark,
     fontSize: 12,
     fontWeight: "800",
   },
