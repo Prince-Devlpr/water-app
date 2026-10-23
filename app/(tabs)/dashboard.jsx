@@ -578,7 +578,7 @@ export default function DashboardScreen() {
             icon={<Gauge size={22} color={COLORS.cyan} />}
             label="WATER FLOW RATE"
             value={`${Number(tank.flowRate || 0).toFixed(1)} L/m`}
-            subtext={tank.flowRate > 0 ? "Flow active (YF-S201)" : "Idle / No flow"}
+            subtext={tank.flowRate > 0 ? "Flow active (YF-S402)" : "Idle / No flow"}
             color={COLORS.cyan}
           />
           <StatCard
